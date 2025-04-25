@@ -1,0 +1,52 @@
+# Environment configurations
+environments:
+  - name: "HalfCheetah-v4"
+    train_steps: 1000  # 1M steps for expert-level performance
+    datasets:
+      - type: "expert"  # Expert-level SAC trained policy (full 1M steps)
+        episodes: 10
+        deterministic: true
+      - type: "medium"  # Medium performance (trained to ~1/3 of expert performance)
+        episodes: 10
+        deterministic: false
+        checkpoint: 300  # Approximately 1/3 of full training
+      - type: "medium-replay"  # Replay buffer from a training run up to medium performance
+        episodes: 100
+        save_buffer: true
+        checkpoint: 300
+      - type: "medium-expert"  # Mix of medium and expert data
+        expert_ratio: 0.5
+        source_datasets: ["expert", "medium"]
+
+  - name: "Hopper-v4"
+    train_steps: 1000
+    datasets:
+      - type: "expert"
+        episodes: 10
+        deterministic: true
+      - type: "medium"
+        episodes: 10
+        deterministic: false
+        checkpoint: 3000
+      - type: "medium-replay"
+        episodes: 10
+        save_buffer: true
+        checkpoint: 3000
+      - type: "medium-expert"
+        expert_ratio: 0.5
+        source_datasets: ["expert", "medium"]
+
+# Global settings
+settings:
+  models_dir: "models"
+  datasets_dir: "datasets"
+  eval_episodes: 10
+  device: "cuda"  # Use "cpu" if no GPU available
+  # Performance thresholds for validation
+  performance_thresholds:
+    HalfCheetah-v4:
+      expert_min: 10000  # Approximate threshold for expert performance
+      medium_min: 4000   # Approximate threshold for medium performance
+    Hopper-v4:
+      expert_min: 3000   # Approximate threshold for expert performance
+      medium_min: 1000   # Approximate threshold for medium performance
