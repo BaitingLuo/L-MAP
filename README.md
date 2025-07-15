@@ -5,7 +5,7 @@ This is the official repository of L-MAP (Scalable Decision-Making in Stochastic
 **Read paper on [OpenReview](https://openreview.net/forum?id=pQsllTesiE) |
 [Arxiv](https://arxiv.org/abs/2502.21186)**
 
-More information/insight is incoming.
+Additional details are incoming.
 If you have any questions about the paper/code, please feel free to reach out to baiting.luo@vanderbilt.edu
 
 ## Installation
