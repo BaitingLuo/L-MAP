@@ -1,22 +1,9 @@
 import math
-import random
-#from nsbridge_simulator.nsbridge_v0 import NSBridgeV0 as model
-#from nsfrozenlake.nsfrozenlake_v0 import NSFrozenLakeV0 as model
-import pickle
-#from BayesianNeuralNetwork import *
 import numpy as np
-#import utils.distribution as distribution
-from multiprocessing import Pool
 import sys
 import torch
-import time
 import random
-import time
-import cProfile
 import torch.nn.functional as F
-
-
-#from latentplan.search import enumerate_all
 
 # Set a higher recursion depth limit (e.g., 3000)
 sys.setrecursionlimit(100000)
@@ -247,12 +234,9 @@ class Node:
         best_nodes = []
         s = self.state
         for child in self.children:
-            #start = time.time()
             action = child.action
             sa = (s, action)
-            #print(sa)
             if sa in self.mcts.Qsa:
-                #print(self.mcts.Nsa[sa])
                 ucb_value = self.mcts.Qsa[sa] + exploration_constant * math.sqrt(
                     math.log(self.mcts.Ns.get(s, 1)) / self.mcts.Nsa[sa])
             else:
@@ -264,7 +248,6 @@ class Node:
                 best_nodes = [child]
             elif ucb_value == best_value:
                 best_nodes.append(child)
-            #print("itr time", time.time() - start)
         return random.choice(best_nodes) if best_nodes else None
 
     def p_best_child(self, exploration_constant=math.sqrt(2)):
@@ -275,9 +258,7 @@ class Node:
             #start = time.time()
             action = child.action
             sa = (s, action)
-            #print(sa)
             if sa in self.mcts.Qsa:
-                #print(self.mcts.Nsa[sa])
                 ucb_value = self.mcts.Qsa[sa] + exploration_constant * child.prior_prob * math.sqrt(
                     math.log(self.mcts.Ns.get(s, 1)) / self.mcts.Nsa[sa])
             else:
@@ -289,7 +270,6 @@ class Node:
                 best_nodes = [child]
             elif ucb_value == best_value:
                 best_nodes.append(child)
-            #print("itr time", time.time() - start)
         return random.choice(best_nodes) if best_nodes else None
 
     def p_best_child2(self, exploration_constant=math.sqrt(2)):
@@ -336,7 +316,6 @@ class Node:
                 best_nodes = [child]
             elif ucb_value == best_value:
                 best_nodes.append(child)
-            #print("itr time", time.time() - start)
         return random.choice(best_nodes) if best_nodes else None
 
 class MCTS:
@@ -389,14 +368,12 @@ class MCTS:
         best_avg_value = -float('inf')
         best_q_value = -float('inf')
         best_action = None
-        #print(self.Nsa)
         for child in self.root.children:
             sa = (child.state, child.action)  # Create a state-action pair
 
             # Fetch Q-value and visit count in a single lookup to avoid redundant dictionary accesses
             q_value = self.Qsa.get(sa, None)
             visit_count = self.Nsa.get(sa, 0)
-            #print(q_value, visit_count)
             # If the state-action pair has been visited at least once
             if q_value is not None and visit_count > 0:
                 # Check if this action has a better visit count or, in the case of a tie, a better Q-value

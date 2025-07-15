@@ -2,17 +2,10 @@ from collections import defaultdict
 import torch
 import time
 
-#from scripts.plan import start_time
-
 REWARD_DIM = VALUE_DIM = 1
-#from .mcts import *
-#from .mcts_beam import *
 from .mcts_expand import *
 import networkx as nx
-import matplotlib.pyplot as plt
-#from collections import Counter
 import torch.nn.functional as F
-import time
 
 @torch.no_grad()
 def MCTS_P(prior, model, x, initial_width, n_expand, n_action, b_percent, action_percent,
@@ -26,7 +19,6 @@ def MCTS_P(prior, model, x, initial_width, n_expand, n_action, b_percent, action
     # Store the value in the nested dictionary
     def store_value(state, action_matrix, index):
         state_key = tensor_to_tuple(state)
-        #print(state_key)
         if state_key not in state_dict:
             state_dict[state_key] = [action_matrix,index]
     import time
@@ -50,7 +42,6 @@ def MCTS_P(prior, model, x, initial_width, n_expand, n_action, b_percent, action
         if step == 0:
             logits, _ = prior(action_contex, state)
         else:
-            #print(state_for_next_prior.shape)
             state_for_next_prior_expanded = state_for_next_prior.repeat_interleave(nb_samples, 0)
             logits, _ = prior(action_contex, state_for_next_prior_expanded)
         probs = torch.softmax(logits[:, -1, :], dim=-1)  # [B x K]
@@ -59,13 +50,8 @@ def MCTS_P(prior, model, x, initial_width, n_expand, n_action, b_percent, action
         contex = torch.cat([torch.repeat_interleave(action_contex, n_expand, 0), samples.reshape([-1, 1])], dim=1)
         if step == 0:
             prediction_raw = model.decode_from_indices(contex, state)
-            #print(prediction_raw.shape)
             reshaped_prediction_raw = prediction_raw.view(nb_samples, n_expand, 2, -1)
-            #print("prediction_raw,",prediction_raw.shape)
-            #print(action_contex)
             expanded_action_contex = action_contex.unsqueeze(1).unsqueeze(2).expand(nb_samples, n_expand, 2, 1)
-            #print("expanded_action_contex,",expanded_action_contex.shape)
-            #print(expanded_action_contex)
             predicted_first_state = prediction_raw[:, 0, 1:1+model.observation_dim]
             decoded_state_compare = state.expand_as(predicted_first_state)
 
@@ -112,16 +98,13 @@ def MCTS_P(prior, model, x, initial_width, n_expand, n_action, b_percent, action
             mse_loss_per_example = mse_loss_per_example.view(-1, nb_samples, n_expand)
 
             expanded_mse_loss = mse_loss_per_example.unsqueeze(3).unsqueeze(4).expand(-1, nb_samples, n_expand, 2, 1)
-            #print(expanded_mse_loss[0])
 
             reshaped_prediction_raw = prediction_raw.view(-1,nb_samples, n_expand, 2, model.observation_dim + action_sequence*model.action_dim+ 2)
-            #print(reshaped_prediction_raw.shape)
             action_contex = action_contex.view(-1, nb_samples, 1)
             action_probs_sampled = action_probs_sampled.view(-1, nb_samples, 1)
             expanded_prior_probs = action_probs_sampled.unsqueeze(3).unsqueeze(4).expand(-1, nb_samples,
                                                                                              n_expand, 2, 1)
 
-            #print("reshaped_prediction_raw", reshaped_prediction_raw.shape)
             expanded_action_contex = action_contex.unsqueeze(3).unsqueeze(4).expand(-1, nb_samples,
                                                                                              n_expand, 2, 1)
 
@@ -154,21 +137,14 @@ def MCTS_P(prior, model, x, initial_width, n_expand, n_action, b_percent, action
 
             final_selected_state = torch.cat(all_selected_tensors, dim=0)
             final_selected_state = final_selected_state.view(-1,final_selected_state.size(2), final_selected_state.size(3))
-            #print(final_selected_tensor.shape, prediction_raw.shape)
             final_selected_state = final_selected_state[:,1,1:1+model.observation_dim]
-            #print(state_for_next_prior.shape)
 
             state_for_next_prior = torch.unique(final_selected_state, dim=0)
-            #print(state_for_next_prior.shape)
-            #state_for_next_prior = prediction_raw[:,1,1:1+model.observation_dim]
-            #state_for_next_prior = torch.unique(state_for_next_prior, dim=0)
     print("inference time,",time.time() - start)
-    #mcts_instance = MCTS(state, state_dict, tree_gamma, prior, model, 1, 1, mse_factor, max_depth - 1)
     mcts_instance = MCTS(state, state_dict, tree_gamma, prior, model, int(n_action*action_percent), n_expand, mse_factor, max_depth-1, pw_alpha)
 
     start_time = time.time()
     mcts_instance.search(mcts_itr)
-    #print(mcts_instance.Qsa.values())
     values_list = list(mcts_instance.Qsa.values())
 
     # Stack the tensors into one tensor

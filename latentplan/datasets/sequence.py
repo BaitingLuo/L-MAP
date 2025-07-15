@@ -259,24 +259,6 @@ class SequenceDataset(torch.utils.data.Dataset):
         return len(self.indices)
 
     def __getitem__(self, idx):
-        # path_ind, start_ind, end_ind = self.indices[idx]
-        # #print(self.joined_segmented.shape)
-        # #print(path_ind, start_ind, end_ind)
-        # joined = self.joined_segmented[path_ind, start_ind:end_ind:self.step]
-        # print("join shape:",joined.shape)
-        # ## don't compute loss for parts of the prediction that extend
-        # ## beyond the max path length
-        # traj_inds = torch.arange(start_ind, end_ind, self.step)
-        # mask = torch.ones(joined.shape, dtype=torch.bool)
-        # mask[traj_inds > self.max_path_length - self.step] = 0
-        # terminal = 1-torch.cumprod(~torch.tensor(self.termination_flags[path_ind, start_ind:end_ind:self.step, None]),
-        #                           dim=1)
-        # ## flatten everything
-        # X = joined[:-1]
-        # Y = joined[1:]
-        # #print(X.shape)
-        # mask = mask[:-1]
-        # terminal = terminal[:-1]
         ################################################################
         path_ind, start_ind, end_ind = self.indices[idx]
         joined = self.joined_segmented[path_ind, start_ind:end_ind:self.step]
@@ -295,15 +277,12 @@ class SequenceDataset(torch.utils.data.Dataset):
         # Define dimensions for X and Y arrays
         X = np.zeros((total_length, 1 + state_dim + action_dim * self.action_sequence_length))
         Y = np.zeros_like(X)
-        #print("Data type of 'X':", X.dtype)
 
         # Compute mask based on max path length
-        #print(rewards,total_length,X.shape)
         for i in range(total_length):
             base_index = i * self.action_sequence_length
             if base_index + self.action_sequence_length > len(joined):
                 break  # Break if there aren't enough actions to form a full sequence
-            #print(base_index)
             X[i, 0] = rewards[base_index]  # Reward
             X[i, 1:1 + state_dim] = states[base_index]  # State
             for j in range(self.action_sequence_length):
@@ -320,7 +299,6 @@ class SequenceDataset(torch.utils.data.Dataset):
         # Adjust mask and terminal to match the sequences
         mask = mask[::self.action_sequence_length][:total_length]
         terminal = terminal[::self.action_sequence_length][:total_length]
-        #print(X.shape, Y.shape, mask.shape, terminal.shape)
         return X, Y, mask, terminal
 
     def get_test(self):
