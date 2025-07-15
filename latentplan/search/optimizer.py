@@ -15,9 +15,8 @@ import torch.nn.functional as F
 import time
 
 @torch.no_grad()
-def MCTS_P(prior, model, x, denormalize_rew, denormalize_val, discount, steps,
-                    beam_width, n_expand, n_action, b_percent, action_percent,
-                    pw_alpha, mcts_itr, prob_threshold=0.05, likelihood_weight=5e2, prob_acc="product", return_info=False, macro_step=3):
+def MCTS_P(prior, model, x, initial_width, n_expand, n_action, b_percent, action_percent,
+                    pw_alpha, mcts_itr, macro_step=3, depth=3):
     state = x[:, 0, :prior.observation_dim]
     def tensor_to_tuple(tensor):
         return tuple(tensor.cpu().numpy().flatten())
@@ -32,9 +31,8 @@ def MCTS_P(prior, model, x, denormalize_rew, denormalize_val, discount, steps,
             state_dict[state_key] = [action_matrix,index]
     import time
     start = time.time()
-    max_depth = 3
+    max_depth = depth
     tree_gamma = 0.99
-    print(macro_step)
     action_sequence = macro_step
     mse_factor = 0
     for step in range(max_depth):
@@ -44,7 +42,7 @@ def MCTS_P(prior, model, x, denormalize_rew, denormalize_val, discount, steps,
             #contex = None
             logits, _ = prior(None, state_for_next_prior)
         action_probs = torch.softmax(logits[:, -1, :], dim=-1) # [B x K]
-        nb_samples = beam_width if step == 0 else n_action
+        nb_samples = initial_width if step == 0 else n_action
         action_samples = torch.multinomial(action_probs, num_samples=nb_samples, replacement=False) # [B, M]
         # Gather the corresponding probabilities for the sampled actions
         action_probs_sampled = torch.gather(action_probs, 1, action_samples)
@@ -59,7 +57,6 @@ def MCTS_P(prior, model, x, denormalize_rew, denormalize_val, discount, steps,
         log_probs = torch.log(probs)
         samples = torch.multinomial(probs, num_samples=n_expand, replacement=True)  # [B, M]
         contex = torch.cat([torch.repeat_interleave(action_contex, n_expand, 0), samples.reshape([-1, 1])], dim=1)
-        print(contex.shape)
         if step == 0:
             prediction_raw = model.decode_from_indices(contex, state)
             #print(prediction_raw.shape)
@@ -83,7 +80,6 @@ def MCTS_P(prior, model, x, denormalize_rew, denormalize_val, discount, steps,
             expansion_values = final_tensor[:, :, 1, 0]   #return to go for sampled state
             action_values = final_tensor[:, 0, 0, 0].view(-1, 1)  #return to go for bootstrapping Q value
             action_mse = final_tensor[:, 0, 0, -1]
-            print(final_tensor.shape)
             expansion_values *= (tree_gamma ** action_sequence) #short back propagation
 
             #weighted means
@@ -168,7 +164,7 @@ def MCTS_P(prior, model, x, denormalize_rew, denormalize_val, discount, steps,
             #state_for_next_prior = torch.unique(state_for_next_prior, dim=0)
     print("inference time,",time.time() - start)
     #mcts_instance = MCTS(state, state_dict, tree_gamma, prior, model, 1, 1, mse_factor, max_depth - 1)
-    mcts_instance = MCTS(state, state_dict, tree_gamma, prior, model, int(n_action*action_percent), n_expand, mse_factor, max_depth-1)
+    mcts_instance = MCTS(state, state_dict, tree_gamma, prior, model, int(n_action*action_percent), n_expand, mse_factor, max_depth-1, pw_alpha)
 
     start_time = time.time()
     mcts_instance.search(mcts_itr)
@@ -198,9 +194,8 @@ def MCTS_P(prior, model, x, denormalize_rew, denormalize_val, discount, steps,
 
 
 @torch.no_grad()
-def MCTS_F(prior, model, x, denormalize_rew, denormalize_val, discount, steps,
-                    beam_width, n_expand, n_action, b_percent, action_percent,
-                    pw_alpha, mcts_itr, prob_threshold=0.05, likelihood_weight=5e2, prob_acc="product", return_info=False, macro_step=3):
+def MCTS_F(prior, model, x, initial_width, n_expand, n_action, b_percent, action_percent,
+                    pw_alpha, mcts_itr, macro_step=3, depth=3):
     state = x[:, 0, :prior.observation_dim]
     def tensor_to_tuple(tensor):
         return tuple(tensor.cpu().numpy().flatten())
@@ -215,7 +210,7 @@ def MCTS_F(prior, model, x, denormalize_rew, denormalize_val, discount, steps,
     #for step in range(steps//model.latent_step):
     import time
     start = time.time()
-    max_depth = 3
+    max_depth = depth
     tree_gamma = 0.99
     action_sequence = macro_step
     mse_factor = 0
@@ -225,7 +220,7 @@ def MCTS_F(prior, model, x, denormalize_rew, denormalize_val, discount, steps,
         else:
             logits, _ = prior(None, state_for_next_prior) #used to sample intermediate action contex
         action_probs = torch.softmax(logits[:, -1, :], dim=-1) # [B x K]
-        nb_samples = beam_width if step == 0 else n_action
+        nb_samples = initial_width if step == 0 else n_action
 
         action_samples = torch.multinomial(action_probs, num_samples=nb_samples, replacement=False) # [B, M]
         # Gather the corresponding probabilities for the sampled actions
@@ -372,7 +367,7 @@ def MCTS_F(prior, model, x, denormalize_rew, denormalize_val, discount, steps,
             history_contex = unique_combined[:, :final_history.size(1)].to(original_ctx_dtype)
             state_for_next_prior = unique_combined[:, final_history.size(1):].to(original_state_dtype)
     print("inference time,",time.time() - start)
-    mcts_instance = MCTS(state, state_dict, tree_gamma, prior, model, int(n_action*action_percent), n_expand, mse_factor, max_depth-1)
+    mcts_instance = MCTS(state, state_dict, tree_gamma, prior, model, int(n_action*action_percent), n_expand, mse_factor, max_depth-1, pw_alpha)
 
     start_time = time.time()
     mcts_instance.search(mcts_itr)

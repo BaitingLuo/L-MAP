@@ -6,11 +6,11 @@ datasets=(hopper-medium-replay-v2)
 
 for data in ${datasets[@]}; do
   for round in 1; do
-    #CUDA_VISIBLE_DEVICES=0 python scripts/train.py --dataset $data --exp_name $name-$round --tag development --seed $round
+    ##CUDA_VISIBLE_DEVICES=0 python scripts/train.py --dataset $data --exp_name $name-$round --tag development --seed $round
     #CUDA_VISIBLE_DEVICES=0 python scripts/trainprior.py --dataset $data --exp_name $name-$round
     for i in 1;
     do
-       CUDA_VISIBLE_DEVICES=0 python scripts/plan.py --test_planner MCTS_P --dataset $data --exp_name $name-$round --suffix $i --beam_width 16 --b_percent 0.5 --n_expand 4 --n_actions 4 --action_percent 0.5 --pw_alpha 0.1 --mcts_itr 100
+       CUDA_VISIBLE_DEVICES=0 python scripts/plan.py --test_planner MCTS_P --dataset $data --exp_name $name-$round --suffix $i --initial_width 16 --b_percent 0.5 --n_expand 4 --n_actions 4 --action_percent 0.5 --pw_alpha 0.1 --mcts_itr 100 --depth 5
     done
   done
 done

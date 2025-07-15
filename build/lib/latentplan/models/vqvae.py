@@ -112,34 +112,6 @@ class VQEmbeddingMovingAverage(nn.Module):
 
         return z_q_x, z_q_x_bar
 
-
-    # def straight_through(self, z_e_x):
-    #     K, D = self.embedding.size()
-    #
-    #     z_e_x_ = z_e_x.contiguous()
-    #     #retrieve embedding and indices
-    #     z_q_x_, indices = vq_st(z_e_x_, self.embedding)
-    #     z_q_x = z_q_x_.contiguous()
-    #
-    #
-    #     if self.training:
-    #         encodings = F.one_hot(indices, K).float()
-    #         self.ema_count = self.decay * self.ema_count + (1 - self.decay) * torch.sum(encodings, dim=0)
-    #
-    #         dw = encodings.transpose(1, 0)@z_e_x_.reshape([-1, D])
-    #         self.ema_w = self.decay * self.ema_w + (1 - self.decay) * dw
-    #
-    #         self.embedding = self.ema_w / (self.ema_count.unsqueeze(-1))
-    #         self.embedding = self.embedding.detach()
-    #         self.ema_w = self.ema_w.detach()
-    #         self.ema_count = self.ema_count.detach()
-    #
-    #     z_q_x_bar_flatten = torch.index_select(self.embedding, dim=0, index=indices)
-    #     z_q_x_bar_ = z_q_x_bar_flatten.view_as(z_e_x_)
-    #     z_q_x_bar = z_q_x_bar_.contiguous()
-    #
-    #     return z_q_x, z_q_x_bar
-
 class VQEmbedding(nn.Module):
     def __init__(self, K, D):
         super().__init__()
@@ -172,7 +144,7 @@ class VQStepWiseTransformer(nn.Module):
         self.condition_size = config.observation_dim
         self.trajectory_input_length = config.block_size - config.transition_dim
         self.embedding_dim = config.n_embd
-        self.trajectory_length = config.block_size//config.transition_dim-1
+        self.trajectory_length = config.block_size//config.transition_dim
         self.block_size = config.block_size
         self.observation_dim = feature_dim
         self.action_dim = config.action_dim
@@ -205,11 +177,13 @@ class VQStepWiseTransformer(nn.Module):
         self.cast_embed = nn.Linear(self.embedding_dim, self.latent_size)
         self.latent_mixing = nn.Linear(self.latent_size+self.observation_dim, self.embedding_dim)
         if "bottleneck" not in config:
-            self.bottleneck = "pooling"
+            self.bottleneck = "vq"
         else:
             self.bottleneck = config.bottleneck
         #max pooling operation
-        if self.bottleneck == "pooling":
+        if self.bottleneck == "vq":
+            self.latent_pooling = nn.Identity()
+        elif self.bottleneck == "pooling":
             self.latent_pooling = nn.MaxPool1d(self.latent_step, stride=self.latent_step)
         elif self.bottleneck == "attention":
             self.latent_pooling = AsymBlock(config, self.trajectory_length // self.latent_step)
@@ -238,7 +212,9 @@ class VQStepWiseTransformer(nn.Module):
         x = self.drop(token_embeddings + position_embeddings)
         x = self.encoder(x)
         ## [ B x T x embedding_dim ]
-        if self.bottleneck == "pooling":
+        if self.bottleneck == "vq":
+            x = self.latent_pooling(x)
+        elif self.bottleneck == "pooling":
             x = self.latent_pooling(x.transpose(1, 2)).transpose(1, 2)
         elif self.bottleneck == "attention":
             x = self.latent_pooling(x)
@@ -265,24 +241,17 @@ class VQStepWiseTransformer(nn.Module):
         inputs = torch.cat([state_flat, latents], dim=-1)
 
         inputs = self.latent_mixing(inputs)
-        if self.bottleneck == "pooling":
+        if self.bottleneck == "vq":
+            inputs = torch.repeat_interleave(inputs, 1, 1)
+        elif self.bottleneck == "pooling":
             inputs = torch.repeat_interleave(inputs, self.latent_step, 1)
         elif self.bottleneck == "attention":
             inputs = self.expand(inputs)
-        #print("input", inputs.shape)
-        #print("self.pos_emb", self.pos_emb.shape, self.trajectory_length)
-        #inputs = inputs + self.pos_emb[:, :inputs.shape[1]]
-        #print("after pos_emb input", self.pos_emb.shape)
-        #print("input", inputs.shape)
-        #print("before decoder", inputs[0])
         inputs = inputs + self.pos_emb[:, :inputs.shape[1]]
         x = self.decoder(inputs)
         x = self.ln_f(x)
-        #print("after decoder", x.shape)
         ## [B x T x obs_dim]
-        #print("output",x.shape)
         joined_pred = self.predict(x)
-        #print("joined_pred", joined_pred.shape)
         joined_pred[:, :, -1] = torch.sigmoid(joined_pred[:, :, -1])
         joined_pred[:, :, 1:self.observation_dim+1] += torch.reshape(state, shape=[B, 1, -1])
         return joined_pred
@@ -339,10 +308,10 @@ class VQContinuousVAE(nn.Module):
         self.value_weight = config.value_weight
         self.position_weight = config.position_weight
         self.first_action_weight = config.first_action_weight
-        self.sum_reward_weight = config.sum_reward_weight
-        self.last_value_weight = config.last_value_weight
+        self.return_weight = config.return_weight
+        self.state_weight = config.state_weight
         self.latent_step = config.latent_step
-
+        self.macro_step = config.macro_step
         self.padding_vector = torch.zeros(self.transition_dim-1)
         self.apply(self._init_weights)
 
@@ -507,32 +476,14 @@ class VQContinuousVAE(nn.Module):
 
         # if we are given some desired targets also calculate the loss
         if targets is not None:
-            #kl = torch.mean(-0.5 * torch.sum(1 + log_var - means.pow(2) - log_var.exp(), dim=1), dim=0)
-            # weights = torch.cat([
-            #     torch.ones(2, device=joined_inputs.device)*self.position_weight,
-            #     torch.ones(self.observation_dim-2, device=joined_inputs.device),
-            #     torch.ones(self.action_dim, device=joined_inputs.device) * self.action_weight,
-            #     torch.ones(1, device=joined_inputs.device) * self.reward_weight,
-            #     torch.ones(1, device=joined_inputs.device) * self.value_weight,
-            # ])
             weights = torch.cat([
-                torch.ones(1, device=joined_inputs.device) * self.value_weight,
-                torch.ones(2, device=joined_inputs.device)*self.position_weight,
-                torch.ones(self.observation_dim-2, device=joined_inputs.device),
-                torch.ones(self.action_dim, device=joined_inputs.device) * self.action_weight,
-                torch.ones(self.action_dim, device=joined_inputs.device) * self.action_weight,
-                torch.ones(self.action_dim, device=joined_inputs.device) * self.action_weight,
+                torch.ones(1, device=joined_inputs.device) * self.value_weight,  # value term
+                torch.ones(self.observation_dim, device=joined_inputs.device),  # observation term
+                *[torch.ones(self.action_dim, device=joined_inputs.device) * self.action_weight
+                  for _ in range(self.macro_step)]  # action terms
             ])
-            #print(pred_trajectory.shape, joined_inputs.shape)
-            #print(pred_trajectory, joined_inputs)
             mse = F.mse_loss(pred_trajectory, joined_inputs, reduction='none')*weights[None, None, :]
 
-            # first_action_loss = self.first_action_weight*F.mse_loss(joined_inputs[:, 0, self.observation_dim:self.observation_dim+self.action_dim],
-            #                                                         pred_trajectory[:, 0, self.observation_dim:self.observation_dim+self.action_dim])
-            # sum_reward_loss = self.sum_reward_weight*F.mse_loss(joined_inputs[:, :, -2].mean(dim=1),
-            #                                                     pred_trajectory[:, :, -2].mean(dim=1))
-            # last_value_loss = self.last_value_weight*F.mse_loss(joined_inputs[:, -1, -1],
-            #                                                     pred_trajectory[:, -1, -1])
             first_action_loss = F.mse_loss(joined_inputs[:, 0, (1+self.observation_dim):(self.observation_dim+1) + self.action_dim],pred_trajectory[:, 0, (1+self.observation_dim):(self.observation_dim+1) + self.action_dim])
             value_loss = F.mse_loss(joined_inputs[:, :, 0].mean(dim=1),pred_trajectory[:, :, 0].mean(dim=1))
             current_state_loss = F.mse_loss(joined_inputs[:, 0, 1:(self.observation_dim+1)],pred_trajectory[:, 0, 1:(self.observation_dim+1)])
@@ -540,11 +491,7 @@ class VQContinuousVAE(nn.Module):
                                            pred_trajectory[:, 1, 1:(self.observation_dim + 1)])
             cross_entropy = F.binary_cross_entropy(pred_terminals, torch.clip(terminals.float(), 0.0, 1.0))
             reconstruction_loss = (mse*mask*terminal_mask).mean()+cross_entropy
-            #print(reconstruction_loss,first_action_loss,sum_reward_loss,last_value_loss)
-            #reconstruction_loss = reconstruction_loss + first_action_loss + sum_reward_loss + last_value_loss
-            #reconstruction_loss = reconstruction_loss + 1*value_loss + 1*next_state_loss + 1*first_action_loss
-            reconstruction_loss = reconstruction_loss+ 0.3*value_loss + 0.3*next_state_loss + 0.3*first_action_loss
-            #reconstruction_loss = torch.sqrt((mse * mask).sum(dim=1)).mean()
+            reconstruction_loss = reconstruction_loss+ self.return_weight*value_loss + self.state_weight*next_state_loss + self.first_action_weight*first_action_loss
             if self.model.ma_update:
                 loss_vq = 0
             else:
@@ -658,205 +605,30 @@ class TransformerPrior(nn.Module):
         """
 
         state = state.to(dtype=torch.float32)
-        #batch_state = state.repeat(512, 1)        ## [ B x T x embedding_dim ]
-        #print("batch state:",batch_state.shape)
-        #batch_state_embeddings = self.state_emb(batch_state)[:, None]
-        #print(batch_state_embeddings.shape)
-        #print(idx.shape)
         if not idx is None:
             b, t = idx.size()
-            #print(idx.size(), targets.size())
-            #b = state.size(0)
             assert t <= self.block_size, "Cannot forward, model block size is exhausted."
             token_embeddings = self.tok_emb(idx) # each index maps to a (learnable) vector
-            #print(self.embedding_dim)
-            #print(token_embeddings.shape)
-            #print("shape 1",torch.zeros(size=(b, 1, self.embedding_dim)).to(token_embeddings).shape)
-            #print("shape 2",token_embeddings.shape)
             token_embeddings = torch.cat([torch.zeros(size=(b, 1, self.embedding_dim)).to(token_embeddings), token_embeddings],
                                              dim=1)
-            #print(token_embeddings)
         else:
-            #b = 1
             b = state.size(0)  # Use the batch size from state if idx is None
             t = 0
             token_embeddings = torch.zeros(size=(b, 1, self.embedding_dim)).to(state)
-            #print(token_embeddings)
-        #print(token_embeddings.shape)
-        ## [ 1 x T+1 x embedding_dim ]
-        #print(t+1)
         position_embeddings = self.pos_emb[:, :t+1, :] # each position maps to a (learnable) vector
         state_embeddings = self.state_emb(state)[:, None]
-        # print("tokens:", token_embeddings.shape)
-        # print("pos:",position_embeddings.shape)
-        # print("state:",state_embeddings.shape)
         ## [ B x T+1 x embedding_dim ]
         x = self.drop(token_embeddings + position_embeddings + state_embeddings)
         x = self.blocks(x)
         ## [ B x T+1 x embedding_dim ]
         x = self.ln_f(x)
-        #print("before:",x.shape)
-        #print("before:",x)
         logits = self.head(x)
-        #print("logits", logits.shape)
-        #print("after:", logits.shape)
-        #print("logits:", logits)
         logits = logits.reshape(b, t + 1, self.vocab_size)
         logits = logits[:,:t+1]
-        #print(logits.shape)
         # if we are given some desired targets also calculate the loss
         if targets is not None:
             loss = F.cross_entropy(logits.reshape(-1, self.vocab_size), targets.reshape([-1]), reduction='none')
-            #print(logits.reshape(-1, self.vocab_size).shape,len(targets.reshape([-1])))
-            #print(len(logits.reshape(-1, self.vocab_size)),len(logits.reshape(-1, self.vocab_size)[0]))
             loss = loss.mean()
         else:
             loss = None
-        #print(logits.reshape(-1, self.vocab_size).shape)
         return logits, loss
-
-    # def forward(self, idx, state, targets=None):
-    #     """
-    #         idx : [ B x T ]
-    #         state: [ B ]
-    #     """
-    #     #
-    #     state = state.to(dtype=torch.float32)
-    #     # batch_state = state.repeat(512, 1)        ## [ B x T x embedding_dim ]
-    #     # print("batch state:",batch_state.shape)
-    #     # batch_state_embeddings = self.state_emb(batch_state)[:, None]
-    #     # print(batch_state_embeddings.shape)
-    #     if not idx is None:
-    #         b, t = idx.size()
-    #         # print(idx.size(), targets.size())
-    #         # b = state.size(0)
-    #         assert t <= self.block_size, "Cannot forward, model block size is exhausted."
-    #         token_embeddings = self.tok_emb(idx)  # each index maps to a (learnable) vector
-    #         token_embeddings = torch.cat(
-    #             [torch.zeros(size=(b, 1, self.embedding_dim)).to(token_embeddings), token_embeddings],
-    #             dim=1)
-    #
-    #     else:
-    #         # b = 1
-    #         b = state.size(0)  # Use the batch size from state if idx is None
-    #         t = 0
-    #         token_embeddings = torch.zeros(size=(b, 1, self.embedding_dim)).to(state)
-    #         # print(token_embeddings)
-    #     # print(t+1)
-    #     position_embeddings = self.pos_emb[:, :t + 1, :]  # each position maps to a (learnable) vector
-    #     state_embeddings = self.state_emb(state)[:, None]
-    #     x = self.drop(token_embeddings + position_embeddings + state_embeddings)
-    #     x = self.blocks(x)
-    #     x = self.ln_f(x)
-    #     #print(x.shape)
-    #     # Compute logits sequentially
-    #     logits = []
-    #     for head in self.heads:
-    #         logits.append(head(x))  # Reuse shared trunk output
-    #     logits = torch.stack(logits, dim=1)  # (B, n_heads, T+1, K)
-    #     #print(idx.shape, state.shape, logits.shape, token_embeddings.shape)
-    #
-    #     # If targets provided, compute multi-token loss
-    #
-    #     if targets is not None:
-    #         losses = []
-    #         seq_length = targets.size(1)  # Original sequence length (T)
-    #         for i in range(self.n_heads):
-    #             valid_length = seq_length - i
-    #             if valid_length <= 0:
-    #                 continue  # No targets available for this head
-    #             # Shift targets for i-th head (predicts token t+i)
-    #             # shifted_targets = targets[:, i:i + logits.shape[2]]  # (B, T+1)
-    #             # print(logits[:, i, :, :].reshape(-1, self.vocab_size).shape, shifted_targets.shape,logits.shape,logits.shape[2])
-    #             # loss = F.cross_entropy(
-    #             #     logits[:, i, :, :].reshape(-1, self.vocab_size),
-    #             #     shifted_targets.reshape(-1),
-    #             #     reduction='mean'
-    #             # )
-    #             # losses.append(loss)
-    #
-    #             # Slice logits and targets to match valid length
-    #             head_logits = logits[:, i, :valid_length, :]  # (B, valid_length, vocab_size)
-    #             head_targets = targets[:, i:i + valid_length]  # (B, valid_length)
-    #             #print(head_logits.shape, head_targets.shape)
-    #             loss = F.cross_entropy(
-    #                 head_logits.reshape(-1, self.vocab_size),
-    #                 head_targets.reshape(-1),
-    #                 reduction='mean'
-    #             )
-    #             losses.append(loss)
-    #         total_loss = torch.mean(torch.stack(losses))
-    #     else:
-    #         total_loss = None
-    #
-    #     return logits, total_loss
-
-    # def generate(self, state, max_length=100, n_speculative=3):
-    #     generated = []
-    #     current_seq = None  # Initialize with start token
-    #
-    #     for _ in range(max_length):
-    #         # 1. Predict n_speculative tokens using all heads
-    #         logits, _ = self(current_seq, state)  # (B, n_heads, T+1, K)
-    #
-    #         # 2. Draft tokens from heads 1 to n_speculative
-    #         draft_tokens = []
-    #         for i in range(1, n_speculative + 1):
-    #             draft = logits[:, i, -1, :].argmax(dim=-1)
-    #             draft_tokens.append(draft)
-    #
-    #         # 3. Verify using head 0 (main model)
-    #         full_candidates = torch.cat([current_seq] + draft_tokens, dim=-1)
-    #         verification_logits, _ = self(full_candidates, state)
-    #         verified = verification_logits[:, 0].argmax(dim=-1)
-    #
-    #         # 4. Find first mismatch
-    #         match_mask = (verified == full_candidates).all(dim=-1)
-    #         if match_mask.all():
-    #             # Accept all draft tokens
-    #             generated.extend(draft_tokens)
-    #             current_seq = full_candidates
-    #         else:
-    #             # Fallback to autoregressive
-    #             next_token = verification_logits[:, 0, -1, :].argmax(dim=-1)
-    #             generated.append(next_token)
-    #             current_seq = torch.cat([current_seq, next_token], dim=-1)
-    #
-    #     return current_seq
-
-    '''
-    def forward(self, idx, state, targets=None):
-        """
-        idx : [ B x T ] or None
-        state: [ B x M ]
-        """
-        state = state.to(dtype=torch.float32)
-        b, _ = state.size()  # Adjusted for batched state input
-
-        if idx is not None:
-            t = idx.size(1)
-            assert t <= self.block_size, "Cannot forward, model block size is exhausted."
-            token_embeddings = self.tok_emb(idx)  # each index maps to a (learnable) vector
-            token_embeddings = torch.cat([torch.zeros(size=(b, 1, self.embedding_dim)).to(token_embeddings.device), token_embeddings], dim=1)
-        else:
-            t = 0
-            token_embeddings = torch.zeros(size=(b, 1, self.embedding_dim)).to(state.device)
-
-        position_embeddings = self.pos_emb[:, :t+1, :]  # Adjust position embeddings for batch
-        state_embeddings = self.state_emb(state)[:, None, :]  # Adjust for 2D state input, adding a new dimension for time
-        x = self.drop(token_embeddings + position_embeddings + state_embeddings.expand(-1, t+1, -1))  # Make sure the dimensions match
-        x = self.blocks(x)
-        x = self.ln_f(x)
-
-        logits = self.head(x)
-        logits = logits.reshape(b, t + 1, self.vocab_size)
-        logits = logits[:, :t+1, :]  # Adjust slice for batch
-
-        if targets is not None:
-            loss = F.cross_entropy(logits.reshape(-1, self.vocab_size), targets.reshape([-1]), reduction='none')
-            loss = loss.mean()
-        else:
-            loss = None
-
-        return logits, loss
-    '''

@@ -19,7 +19,7 @@ from currency_exchange import currency_exchange
 from hiv_treatment import hiv_treatment
 import matplotlib.pyplot as plt
 
-from latentplan.search import MCTS_P
+from latentplan.search import MCTS_P, MCTS_F
 
 
 class Parser(utils.Parser):
@@ -33,12 +33,13 @@ class Parser(utils.Parser):
 args = Parser().parse_args('plan')
 args.nb_samples = int(args.nb_samples)
 args.n_expand = int(args.n_expand)
-args.beam_width = int(args.beam_width)
+args.initial_width = int(args.initial_width)
 args.n_actions = int(args.n_actions)
 args.b_percent = float(args.b_percent)
 args.action_percent = float(args.action_percent)
 args.pw_alpha = float(args.pw_alpha)
 args.mcts_itr = int(args.mcts_itr)
+args.depth = int(args.depth)
 args.horizon = int(args.horizon)
 args.rounds = int(args.rounds)
 args.logbase = os.path.expanduser(args.logbase)
@@ -61,35 +62,27 @@ print("check save path", args.savepath)
 #env.seed(1*int(args.suffix)*100)
 
 d4rl_env = datasets.load_environment(args.dataset)
-#d4rl_env.max_episode_steps = int(args.max_episode_steps)
-#env = hopper_high_noise.HopperHighNoise(1*int(args.suffix)*100)
 if 'hopper' in args.dataset:
     env = hopper_high_noise.HopperHighNoise()
-    print("high noise")
 elif 'walker2d' in args.dataset:
     env = walker2d_high_noise.Walker2DHighNoise()
 else:
     env = d4rl_env
-
 #env = d4rl_env
 #env = currency_exchange.CurrencyExchange()
 #env = hiv_treatment.HIVTreatment()
-#env.seed(int(args.suffix)*100)
+
 dataset = utils.load_from_config(args.logbase, args.dataset, args.exp_name,
         'data_config.pkl')
 
 
 gpt, gpt_epoch = utils.load_model(args.logbase, args.dataset, args.exp_name,
         epoch=args.gpt_epoch, device=args.device)
-#gpt.reset_model()
-#gpt.to('cuda')
+
 
 if args.test_planner in ["sample_prior", "sample_prior_tree", "beam_prior", "beam_mimic", "beam_uniform", "MCTS_P"]:
     prior, _ = utils.load_prior_model(args.logbase, args.dataset, args.exp_name,
                                       epoch=args.gpt_epoch, device=args.device)
-
-#prior.reset_model()
-
 
 gpt.set_padding_vector(dataset.normalize_joined_single(np.zeros(gpt.transition_dim-1)))
 #######################
@@ -121,10 +114,7 @@ if "antmaze" in env.name:
     else:
         observation = np.concatenate([observation, env.target_goal])
         rollout = [np.concatenate([env.state_vector().copy(), env.target_goal])]
-#else:
-#    rollout = [np.concatenate([env.state_vector().copy()])]
 
-## previous (tokenized) transitions for conditioning transformer
 context = []
 mses = []
 
@@ -135,8 +125,6 @@ gpt.eval()
 total_high_loss_count = 0
 for t in range(T):
     observation = preprocess_fn(observation)
-    #state = env.state_vector()
-    #print("state", state)
     if dataset.normalized_raw:
         observation = dataset.normalize_states(observation)
 
@@ -153,22 +141,18 @@ for t in range(T):
         if args.test_planner == 'MCTS_P':
             prior.eval()
             start_time = time.time()
-            sequence = MCTS_P(prior, gpt, prefix, denormalize_rew=dataset.denormalize_rewards,
-                              denormalize_val=dataset.denormalize_values,
-                              steps=int(args.horizon),
-                              beam_width=args.beam_width,
+            sequence = MCTS_P(prior, gpt, prefix,
+                              initial_width=args.initial_width,
                               n_expand=args.n_expand,
                               n_action=args.n_actions,
                               b_percent= args.b_percent,
                               action_percent = args.action_percent,
                               pw_alpha = args.pw_alpha,
                               mcts_itr = args.mcts_itr,
-                              likelihood_weight=args.prob_weight,
-                              prob_threshold=float(args.prob_threshold),
-                              discount=discount,
-                              macro_step=args.macro_step
+                              macro_step=args.macro_step,
+                              depth=args.depth,
                               )
-            # print("context,",contex)
+
             end_time = time.time()  # End timer
             # Calculate the elapsed time in seconds
             elapsed_time = end_time - start_time
@@ -176,22 +160,17 @@ for t in range(T):
         elif args.test_planner == 'MCTS_F':
             prior.eval()
             start_time = time.time()
-            sequence = MCTS_P(prior, gpt, prefix, denormalize_rew=dataset.denormalize_rewards,
-                              denormalize_val=dataset.denormalize_values,
-                              steps=int(args.horizon),
-                              beam_width=args.beam_width,
+            sequence = MCTS_F(prior, gpt, prefix,
+                              initial_width=args.initial_width,
                               n_expand=args.n_expand,
                               n_action=args.n_actions,
                               b_percent= args.b_percent,
                               action_percent = args.action_percent,
                               pw_alpha = args.pw_alpha,
                               mcts_itr = args.mcts_itr,
-                              likelihood_weight=args.prob_weight,
-                              prob_threshold=float(args.prob_threshold),
-                              discount=discount,
-                              macro_step=args.macro_step
+                              macro_step=args.macro_step,
+                              depth=args.depth,
                               )
-            # print("context,",contex)
             end_time = time.time()  # End timer
             # Calculate the elapsed time in seconds
             elapsed_time = end_time - start_time
@@ -203,7 +182,6 @@ for t in range(T):
     if t == 0:
         first_value = float(dataset.denormalize_values(sequence[0,-2]))
         first_search_value = float(dataset.denormalize_values(sequence[-1, -2]))
-    #print(dataset.denormalize_values(sequence[0,-2]))
 
     ## [ horizon x transition_dim ] convert sampled tokens to continuous latentplan
     sequence_recon = sequence
@@ -212,15 +190,12 @@ for t in range(T):
 
     feature_dim = dataset.observation_dim
     action = extract_actions(sequence_recon, feature_dim, action_dim, t=0)
-    #print(action)
     if dataset.normalized_raw:
         action = dataset.denormalize_actions(action)
-        #print(action)
         sequence_recon = dataset.denormalize_joined(sequence_recon)
 
     ## execute action in environment
     next_observation, reward, terminal, _ = env.step(action)
-    # start_time = time.time()  # Start timer
     if "antmaze" in env.name:
         if dataset.disable_goal:
             next_observation = np.concatenate([next_observation, np.zeros([2], dtype=np.float32)])
@@ -231,10 +206,7 @@ for t in range(T):
     ## update return
     total_reward += reward
     discount_return += reward* discount**(t)
-    #print(total_reward)
     score = d4rl_env.get_normalized_score(total_reward)
-    #score = total_reward/100
-    #rollout.append(state.copy())
     context = update_context(observation, action, reward, device=args.device)
 
     print(
@@ -243,8 +215,6 @@ for t in range(T):
     )
     ########render here
     #renderer.render_matplotlib(state.copy())
-    #print(state)
-    #print(sequence_recon)
     #frames.append(frame)
     if t % args.vis_freq == 0 or terminal or t == T-1:
         if not os.path.exists(args.savepath):

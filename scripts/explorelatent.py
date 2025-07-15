@@ -61,7 +61,7 @@ args.logbase = os.path.expanduser(args.logbase)
 args.savepath = os.path.expanduser("/tmp/explorelatent")
 args.nb_samples = int(args.nb_samples)
 args.n_expand = int(args.n_expand)
-args.beam_width = int(args.beam_width)
+args.initial_width = int(args.initial_width)
 args.horizon = int(args.horizon)
 args.rounds = int(args.rounds)
 
@@ -145,7 +145,7 @@ for e in range(0, 10):
                 sequence, info_beam = beam_with_prior(prior, value_fn, model, prefix, denormalize_rew=dataset.denormalize_rewards,
                                            denormalize_val=dataset.denormalize_values,
                                            steps=int(args.horizon) - args.max_context_transitions - 1,
-                                           beam_width=args.beam_width,
+                                           initial_width=args.initial_width,
                                            n_expand=args.n_expand,
                                            likelihood_weight=args.prob_weight,
                                            prob_threshold=float(args.prob_threshold),
@@ -157,7 +157,7 @@ for e in range(0, 10):
                 sequence, info_beam = mcts_with_prior(prior, value_fn, model, prefix, denormalize_rew=dataset.denormalize_rewards,
                                            denormalize_val=dataset.denormalize_values,
                                            steps=int(args.horizon) - args.max_context_transitions - 1,
-                                           beam_width=args.beam_width,
+                                           initial_width=args.initial_width,
                                            n_expand=args.n_expand,
                                            likelihood_weight=args.prob_weight,
                                            prob_threshold=float(args.prob_threshold),

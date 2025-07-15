@@ -84,11 +84,7 @@ class CausalSelfAttention(nn.Module):
         # causal mask to ensure that attention is only applied to the left in the input sequence
         self.register_buffer("mask", torch.tril(torch.ones(config.block_size, config.block_size))
                                      .view(1, 1, config.block_size, config.block_size))
-        ## mask previous value estimates
-        # if "action_dim" in config:
-        #     joined_dim = config.observation_dim + config.action_dim + 2
-        #     self.mask.squeeze()[:,joined_dim-1::joined_dim] = 0
-        ##
+
         self.n_head = config.n_head
 
     def forward(self, x, layer_past=None):

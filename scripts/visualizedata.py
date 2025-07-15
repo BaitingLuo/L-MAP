@@ -15,7 +15,7 @@ class Parser(utils.Parser):
 args = Parser().parse_args('plan')
 args.nb_samples = int(args.nb_samples)
 args.n_expand = int(args.n_expand)
-args.beam_width = int(args.beam_width)
+args.initial_width = int(args.initial_width)
 args.rounds = int(args.rounds)
 args.logbase = os.path.expanduser(args.logbase)
 args.savepath = os.path.expanduser("tmp/visualizedata")

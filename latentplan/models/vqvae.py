@@ -144,7 +144,7 @@ class VQStepWiseTransformer(nn.Module):
         self.condition_size = config.observation_dim
         self.trajectory_input_length = config.block_size - config.transition_dim
         self.embedding_dim = config.n_embd
-        self.trajectory_length = config.block_size//config.transition_dim-1
+        self.trajectory_length = config.block_size//config.transition_dim
         self.block_size = config.block_size
         self.observation_dim = feature_dim
         self.action_dim = config.action_dim
@@ -605,205 +605,30 @@ class TransformerPrior(nn.Module):
         """
 
         state = state.to(dtype=torch.float32)
-        #batch_state = state.repeat(512, 1)        ## [ B x T x embedding_dim ]
-        #print("batch state:",batch_state.shape)
-        #batch_state_embeddings = self.state_emb(batch_state)[:, None]
-        #print(batch_state_embeddings.shape)
-        #print(idx.shape)
         if not idx is None:
             b, t = idx.size()
-            #print(idx.size(), targets.size())
-            #b = state.size(0)
             assert t <= self.block_size, "Cannot forward, model block size is exhausted."
             token_embeddings = self.tok_emb(idx) # each index maps to a (learnable) vector
-            #print(self.embedding_dim)
-            #print(token_embeddings.shape)
-            #print("shape 1",torch.zeros(size=(b, 1, self.embedding_dim)).to(token_embeddings).shape)
-            #print("shape 2",token_embeddings.shape)
             token_embeddings = torch.cat([torch.zeros(size=(b, 1, self.embedding_dim)).to(token_embeddings), token_embeddings],
                                              dim=1)
-            #print(token_embeddings)
         else:
-            #b = 1
             b = state.size(0)  # Use the batch size from state if idx is None
             t = 0
             token_embeddings = torch.zeros(size=(b, 1, self.embedding_dim)).to(state)
-            #print(token_embeddings)
-        #print(token_embeddings.shape)
-        ## [ 1 x T+1 x embedding_dim ]
-        #print(t+1)
         position_embeddings = self.pos_emb[:, :t+1, :] # each position maps to a (learnable) vector
         state_embeddings = self.state_emb(state)[:, None]
-        # print("tokens:", token_embeddings.shape)
-        # print("pos:",position_embeddings.shape)
-        # print("state:",state_embeddings.shape)
         ## [ B x T+1 x embedding_dim ]
         x = self.drop(token_embeddings + position_embeddings + state_embeddings)
         x = self.blocks(x)
         ## [ B x T+1 x embedding_dim ]
         x = self.ln_f(x)
-        #print("before:",x.shape)
-        #print("before:",x)
         logits = self.head(x)
-        #print("logits", logits.shape)
-        #print("after:", logits.shape)
-        #print("logits:", logits)
         logits = logits.reshape(b, t + 1, self.vocab_size)
         logits = logits[:,:t+1]
-        #print(logits.shape)
         # if we are given some desired targets also calculate the loss
         if targets is not None:
             loss = F.cross_entropy(logits.reshape(-1, self.vocab_size), targets.reshape([-1]), reduction='none')
-            #print(logits.reshape(-1, self.vocab_size).shape,len(targets.reshape([-1])))
-            #print(len(logits.reshape(-1, self.vocab_size)),len(logits.reshape(-1, self.vocab_size)[0]))
             loss = loss.mean()
         else:
             loss = None
-        #print(logits.reshape(-1, self.vocab_size).shape)
         return logits, loss
-
-    # def forward(self, idx, state, targets=None):
-    #     """
-    #         idx : [ B x T ]
-    #         state: [ B ]
-    #     """
-    #     #
-    #     state = state.to(dtype=torch.float32)
-    #     # batch_state = state.repeat(512, 1)        ## [ B x T x embedding_dim ]
-    #     # print("batch state:",batch_state.shape)
-    #     # batch_state_embeddings = self.state_emb(batch_state)[:, None]
-    #     # print(batch_state_embeddings.shape)
-    #     if not idx is None:
-    #         b, t = idx.size()
-    #         # print(idx.size(), targets.size())
-    #         # b = state.size(0)
-    #         assert t <= self.block_size, "Cannot forward, model block size is exhausted."
-    #         token_embeddings = self.tok_emb(idx)  # each index maps to a (learnable) vector
-    #         token_embeddings = torch.cat(
-    #             [torch.zeros(size=(b, 1, self.embedding_dim)).to(token_embeddings), token_embeddings],
-    #             dim=1)
-    #
-    #     else:
-    #         # b = 1
-    #         b = state.size(0)  # Use the batch size from state if idx is None
-    #         t = 0
-    #         token_embeddings = torch.zeros(size=(b, 1, self.embedding_dim)).to(state)
-    #         # print(token_embeddings)
-    #     # print(t+1)
-    #     position_embeddings = self.pos_emb[:, :t + 1, :]  # each position maps to a (learnable) vector
-    #     state_embeddings = self.state_emb(state)[:, None]
-    #     x = self.drop(token_embeddings + position_embeddings + state_embeddings)
-    #     x = self.blocks(x)
-    #     x = self.ln_f(x)
-    #     #print(x.shape)
-    #     # Compute logits sequentially
-    #     logits = []
-    #     for head in self.heads:
-    #         logits.append(head(x))  # Reuse shared trunk output
-    #     logits = torch.stack(logits, dim=1)  # (B, n_heads, T+1, K)
-    #     #print(idx.shape, state.shape, logits.shape, token_embeddings.shape)
-    #
-    #     # If targets provided, compute multi-token loss
-    #
-    #     if targets is not None:
-    #         losses = []
-    #         seq_length = targets.size(1)  # Original sequence length (T)
-    #         for i in range(self.n_heads):
-    #             valid_length = seq_length - i
-    #             if valid_length <= 0:
-    #                 continue  # No targets available for this head
-    #             # Shift targets for i-th head (predicts token t+i)
-    #             # shifted_targets = targets[:, i:i + logits.shape[2]]  # (B, T+1)
-    #             # print(logits[:, i, :, :].reshape(-1, self.vocab_size).shape, shifted_targets.shape,logits.shape,logits.shape[2])
-    #             # loss = F.cross_entropy(
-    #             #     logits[:, i, :, :].reshape(-1, self.vocab_size),
-    #             #     shifted_targets.reshape(-1),
-    #             #     reduction='mean'
-    #             # )
-    #             # losses.append(loss)
-    #
-    #             # Slice logits and targets to match valid length
-    #             head_logits = logits[:, i, :valid_length, :]  # (B, valid_length, vocab_size)
-    #             head_targets = targets[:, i:i + valid_length]  # (B, valid_length)
-    #             #print(head_logits.shape, head_targets.shape)
-    #             loss = F.cross_entropy(
-    #                 head_logits.reshape(-1, self.vocab_size),
-    #                 head_targets.reshape(-1),
-    #                 reduction='mean'
-    #             )
-    #             losses.append(loss)
-    #         total_loss = torch.mean(torch.stack(losses))
-    #     else:
-    #         total_loss = None
-    #
-    #     return logits, total_loss
-
-    # def generate(self, state, max_length=100, n_speculative=3):
-    #     generated = []
-    #     current_seq = None  # Initialize with start token
-    #
-    #     for _ in range(max_length):
-    #         # 1. Predict n_speculative tokens using all heads
-    #         logits, _ = self(current_seq, state)  # (B, n_heads, T+1, K)
-    #
-    #         # 2. Draft tokens from heads 1 to n_speculative
-    #         draft_tokens = []
-    #         for i in range(1, n_speculative + 1):
-    #             draft = logits[:, i, -1, :].argmax(dim=-1)
-    #             draft_tokens.append(draft)
-    #
-    #         # 3. Verify using head 0 (main model)
-    #         full_candidates = torch.cat([current_seq] + draft_tokens, dim=-1)
-    #         verification_logits, _ = self(full_candidates, state)
-    #         verified = verification_logits[:, 0].argmax(dim=-1)
-    #
-    #         # 4. Find first mismatch
-    #         match_mask = (verified == full_candidates).all(dim=-1)
-    #         if match_mask.all():
-    #             # Accept all draft tokens
-    #             generated.extend(draft_tokens)
-    #             current_seq = full_candidates
-    #         else:
-    #             # Fallback to autoregressive
-    #             next_token = verification_logits[:, 0, -1, :].argmax(dim=-1)
-    #             generated.append(next_token)
-    #             current_seq = torch.cat([current_seq, next_token], dim=-1)
-    #
-    #     return current_seq
-
-    '''
-    def forward(self, idx, state, targets=None):
-        """
-        idx : [ B x T ] or None
-        state: [ B x M ]
-        """
-        state = state.to(dtype=torch.float32)
-        b, _ = state.size()  # Adjusted for batched state input
-
-        if idx is not None:
-            t = idx.size(1)
-            assert t <= self.block_size, "Cannot forward, model block size is exhausted."
-            token_embeddings = self.tok_emb(idx)  # each index maps to a (learnable) vector
-            token_embeddings = torch.cat([torch.zeros(size=(b, 1, self.embedding_dim)).to(token_embeddings.device), token_embeddings], dim=1)
-        else:
-            t = 0
-            token_embeddings = torch.zeros(size=(b, 1, self.embedding_dim)).to(state.device)
-
-        position_embeddings = self.pos_emb[:, :t+1, :]  # Adjust position embeddings for batch
-        state_embeddings = self.state_emb(state)[:, None, :]  # Adjust for 2D state input, adding a new dimension for time
-        x = self.drop(token_embeddings + position_embeddings + state_embeddings.expand(-1, t+1, -1))  # Make sure the dimensions match
-        x = self.blocks(x)
-        x = self.ln_f(x)
-
-        logits = self.head(x)
-        logits = logits.reshape(b, t + 1, self.vocab_size)
-        logits = logits[:, :t+1, :]  # Adjust slice for batch
-
-        if targets is not None:
-            loss = F.cross_entropy(logits.reshape(-1, self.vocab_size), targets.reshape([-1]), reduction='none')
-            loss = loss.mean()
-        else:
-            loss = None
-
-        return logits, loss
-    '''

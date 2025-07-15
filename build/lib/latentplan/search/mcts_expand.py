@@ -89,42 +89,29 @@ class Node:
                 return child
         return None
 
-
-
     def store_value(self, state, action_matrix, index):
         state_key = tensor_to_tuple(state)
-        # print(state_key)
         if state_key not in self.mcts.state_dict:
             self.mcts.state_dict[state_key] = [action_matrix, index]
-    # def is_terminal(self, depth):
-    #     #reward = self.task.instant_reward_byindex(state)
-    #     if depth == 4:
-    #         return True
 
     def expand(self):
         child_node = None
-        #print(self.contex)
         if self.is_decision_node():
             if self.mcts.is_terminal(self.depth) and self.node_value is not None:
-                #if self.depth == 0:
                 return self
             retrieved_data = self.mcts.state_dict.get(self.state, None)
             if retrieved_data is not None:
                 actions_samples = retrieved_data[0]
                 expanded_actions = retrieved_data[1]
                 actions_samples = actions_samples[expanded_actions]
-                #print(expanded_actions.shape)
                 all_actions = actions_samples[:,0,0,-2].flatten()
                 expansion_values = actions_samples[:,:,1,0]
                 action_values = actions_samples[:,0,0,0].view(-1,1)
-                #print(action_values.shape)
                 expanded_states = actions_samples[:,:,1,1:self.mcts.model.observation_dim+1]
                 #indicate how good the action reconstruct the first state, OOD indicator
                 action_mse = actions_samples[:, 0, 0, -1]
                 expansion_values *= (self.tree_gamma ** self.mcts.action_sequence)
-                #print(expansion_values.shape, action_values.shape, action_mse.shape)
                 mean_values = torch.cat((expansion_values, action_values), dim=1)
-                #self.node_value =torch.sum(mean_values)
                 self.increase_visit = mean_values.numel()
                 expansion_factor = mean_values.size(1)
                 mean_values = mean_values.mean(dim=1)
@@ -143,18 +130,11 @@ class Node:
                     self.children.append(child_node)
                     #self.mcts.update_metrics(self.state, action, (self.tree_gamma ** self.depth) * mean_values[itr], expansion_factor)
                     self.mcts.update_metrics(self.state, action, mean_values[itr], expansion_factor)
-                #print("expand time count", time.time() - start)
-            ##    print("count depth", self.depth)
-            #else:
-                #print("count depth", self.state)
             else:
-                #print("we get into newly sampled state")
+                #get into a new state, needs to do expansion online
                 input_state = torch.tensor(self.state).reshape([1, -1]).to('cuda')
                 logits, _ = self.mcts.prior(None, input_state)
                 action_probs = torch.softmax(logits[:, -1, :], dim=-1)  # [B x K]
-                # log_probs = torch.log(probs)
-                # print(n_action)
-                #nb_samples = self.mcts.n_action
                 action_samples = torch.multinomial(action_probs, num_samples=self.mcts.n_action, replacement=False)  # [B, M]
                 action_contex = action_samples.reshape([-1, 1])  # [(B*M) x t]
                 action_probs_sampled = torch.gather(action_probs, 1, action_samples)
@@ -189,10 +169,7 @@ class Node:
                 self.node_value = mean_values.mean(dim=0)
                 k = int(mean_values.size(0))
                 values_with_b, index = torch.topk(mean_values, k)
-                #print(len(index), index)
                 self.store_value(input_state, final_tensor, index)
-                #all_actions = actions_samples[:, 0, 0, -2]
-                #print(action_contex.flatten())
                 action_probs_sampled = action_probs_sampled.view(-1)
                 expanded_states = reshaped_prediction_raw[:, :, 1, 1:self.mcts.model.observation_dim + 1]
                 self.proposed_prob = 0
@@ -200,18 +177,14 @@ class Node:
                     self.proposed_prob += action_probs_sampled[itr]
                     child_node = Node(self.state, self.tree_gamma, self.prior, self.depth, prior_prob = action_probs_sampled[itr], expanded=True, action=action, parent=self, node_type="chance", mcts=self.mcts, ood_value=action_mse[itr], resamples=expanded_states[itr])
                     self.children.append(child_node)
-                    #self.mcts.update_metrics(self.state, action, (self.tree_gamma ** self.depth) * mean_values[itr], expansion_factor)
                     self.mcts.update_metrics(self.state, action, mean_values[itr], expansion_factor)
         else:  # For a chance node
             #let's do random sampling for now
-            #self.resamples
-            #print(self.resamples.shape)
             sa = (self.state, self.action)
             visit_count = self.mcts.Nsa.get(sa, 0)
             k = 1
-            alpha = 0
-            #progressive widening. k is normally set to 1, alpha is used for controlling propensity
-            #print(len(self.parent.children), k * (visit_count ** alpha))
+            alpha = self.mcts.pw_alpha
+            #Progressive widening. k is normally set to 1. Alpha is used for controlling propensity, set to 0 for improving efficiency.
             if len(self.parent.children) < k * (visit_count ** alpha):
                 action_contex = self.action.long().reshape([-1, 1])
                 input_state = torch.tensor(self.state).reshape([1, -1]).to('cuda')
@@ -230,12 +203,9 @@ class Node:
                     self.children.append(child_node)
             else:
                 num_samples = 1
-                #print(smaple, self.resamples.size(0))
                 sampled_indice = torch.randint(0, self.resamples.size(0), (num_samples,))
                 sampled_tensor = self.resamples[sampled_indice]
                 sampled_state = tensor_to_tuple(sampled_tensor)
-                #value = self.mcts.state_dict.get(sampled_state, None)
-                #print(new_contex)
                 # Check if a child with the resulting state already exists
                 existing_child = self.get_child_with_state(sampled_state)
                 if existing_child is not None:
@@ -268,8 +238,6 @@ class Node:
             self.parent.backpropagate(node_value, increase_visit, depth_count)
             if self.action is not None:  # Ensure the action is valid (not None)
                 # Note: Discounting applied here might need adjustment based on how you want to use it in metric updates
-                #print(self.action)
-                #self.mcts.update_metrics(self.state, self.action, (self.tree_gamma ** depth_count) * (node_value/increase_visit), increase_visit)
                 self.mcts.update_metrics(self.state, self.action,
                                          (self.tree_gamma ** depth_count) * node_value,
                                          increase_visit)
@@ -332,8 +300,6 @@ class Node:
             #start = time.time()
             action = child.action
             sa = (s, action)
-            #print(sa)
-            #print(self.mcts.Nsa[sa]/self.mcts.Ns.get(s, 1), child.prior_prob/self.proposed_prob, self.mcts.Nsa[sa]/self.mcts.Ns.get(s, 1)*child.prior_prob/self.proposed_prob)
             if sa in self.mcts.Qsa:
                 #print(exploration_constant * (self.mcts.Nsa[sa]/self.mcts.Ns.get(s, 1)*child.prior_prob/self.proposed_prob))
                 # ucb_value = self.mcts.Qsa[sa] + exploration_constant * (1/len(self.children)) * child.prior_prob * math.sqrt(
@@ -374,8 +340,7 @@ class Node:
         return random.choice(best_nodes) if best_nodes else None
 
 class MCTS:
-    def __init__(self, state, state_dict, tree_gamma, prior, model, n_action, n_expand, mse_factor, max_depth):
-        #self.root = Node(bnn1.task._NSBridgeV0__decode_state(initial_state_coordinate, initial_state_index, -1))
+    def __init__(self, state, state_dict, tree_gamma, prior, model, n_action, n_expand, mse_factor, max_depth, pw_alpha):
         initial_state = 'root'
         contex_state = None
         contex = None
@@ -395,14 +360,12 @@ class MCTS:
         self.n_expand = n_expand
         self.action_sequence = 3
         self.mse_factor = mse_factor
-        #contex = None
-        #logits, _ = prior(contex, state)
-        #probs = torch.softmax(logits[:, -1, :], dim=-1)
+        self.pw_alpha = pw_alpha
+
 
     def is_terminal(self, depth):
         #reward = self.task.instant_reward_byindex(state)
         if depth == self.max_depth:
-            #print("we reach maximum", depth)
             return True
 
     def search(self, iterations):
@@ -410,8 +373,6 @@ class MCTS:
             leaf = self.traverse(self.root)  # Traverse till you reach a leaf
             expanded_node = leaf.expand()
             expanded_node.backpropagate(expanded_node.node_value,expanded_node.increase_visit,0)
-        #print(self.Qsa)
-        #print(self.Nsa)
     def traverse(self, node):
         while node.children:
             #if node.is_decision_node() and self.is_terminal(node.depth):

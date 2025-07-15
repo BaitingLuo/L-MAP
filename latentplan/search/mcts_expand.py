@@ -183,7 +183,7 @@ class Node:
             sa = (self.state, self.action)
             visit_count = self.mcts.Nsa.get(sa, 0)
             k = 1
-            alpha = 0
+            alpha = self.mcts.pw_alpha
             #Progressive widening. k is normally set to 1. Alpha is used for controlling propensity, set to 0 for improving efficiency.
             if len(self.parent.children) < k * (visit_count ** alpha):
                 action_contex = self.action.long().reshape([-1, 1])
@@ -340,8 +340,7 @@ class Node:
         return random.choice(best_nodes) if best_nodes else None
 
 class MCTS:
-    def __init__(self, state, state_dict, tree_gamma, prior, model, n_action, n_expand, mse_factor, max_depth):
-        #self.root = Node(bnn1.task._NSBridgeV0__decode_state(initial_state_coordinate, initial_state_index, -1))
+    def __init__(self, state, state_dict, tree_gamma, prior, model, n_action, n_expand, mse_factor, max_depth, pw_alpha):
         initial_state = 'root'
         contex_state = None
         contex = None
@@ -361,6 +360,7 @@ class MCTS:
         self.n_expand = n_expand
         self.action_sequence = 3
         self.mse_factor = mse_factor
+        self.pw_alpha = pw_alpha
 
 
     def is_terminal(self, depth):

@@ -41,13 +41,8 @@ class VQTrainer:
             timer = Timer()
             for it, batch_numpy in enumerate(loader):
                 batch = to(batch_numpy, self.device)
-                # Print the shape of the batch
-                #print(len(batch))
-                #print(len(batch[0]), len(batch[0][0]), len(batch[0][0][0]))
-                #print(len(batch[1]), len(batch[1][0]), len(batch[1][0][0]))
-                #print(len(batch[2]), len(batch[2][0]), len(batch[2][0][0]))
-                #print(len(batch[3]), len(batch[3][0]), len(batch[3][0][0]))
                 # decay the learning rate based on our progress
+                # not used in this work
                 y = batch[-2]
                 self.n_tokens += np.prod(y.shape)
                 if self.n_tokens < config.warmup_tokens:
@@ -163,6 +158,8 @@ class PriorTrainer:
                 # decay the learning rate based on our progress
                 y = batch[1]
                 self.n_tokens += np.prod(y.shape)
+
+                #not used in this work
                 if self.n_tokens < config.warmup_tokens:
                     # linear warmup
                     lr_mult = float(self.n_tokens) / float(max(1, config.warmup_tokens))

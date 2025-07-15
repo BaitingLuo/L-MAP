@@ -54,34 +54,9 @@ class SequenceDataset(torch.utils.data.Dataset):
         print(f'[ datasets/sequence ] Loading...', end=' ', flush=True)
         if 'MineRL' in env.name:
             raise ValueError()
-        #print("!!!!!!!!!!!!!!!!!!!", env.unwrapped)
-        # dataset_for_normalization = qlearning_dataset_with_timeouts(env.unwrapped, terminate_on_end=True, disable_goal=disable_goal)
-        # observations = dataset_for_normalization['observations']
-        # actions = dataset_for_normalization['actions'].astype(np.float32)
-        # rewards = dataset_for_normalization['rewards'].astype(np.float32)
-        # #terminals = dataset_for_normalization['terminals']
-        # #realterminals = dataset_for_normalization['realterminals']
-        # print("observation shape,",observations.shape)
-        # print("rewards shape,",rewards.shape)
-        # self.normalized_raw = normalize_raw
-        # self.normalize_reward = normalize_reward
-        # self.obs_mean, self.obs_std = observations.mean(axis=0, keepdims=True), observations.std(axis=0, keepdims=True)
-        # self.act_mean, self.act_std = actions.mean(axis=0, keepdims=True), actions.std(axis=0, keepdims=True)
-        # self.reward_mean, self.reward_std = rewards.mean(), rewards.std()
-
-
-
         dataset = qlearning_dataset_with_timeouts(env.unwrapped, terminate_on_end=True, disable_goal=disable_goal)
-
-        #dataset = qlearning_dataset_with_timeouts(env, dataset=None, terminate_on_end=False)
         print('✓')
 
-        # preprocess_fn = dataset_preprocess_functions.get(env.name)
-        # if preprocess_fn:
-        #     print(f'[ datasets/sequence ] Modifying environment')
-        #     dataset = preprocess_fn(dataset)
-        #     print("!!!!!!!!!!!!!we are processing")
-        ##
         observations = dataset['observations']
         actions = dataset['actions'].astype(np.float32)
         rewards = dataset['rewards'].astype(np.float32)
@@ -95,12 +70,6 @@ class SequenceDataset(torch.utils.data.Dataset):
         self.obs_mean, self.obs_std = observations.mean(axis=0, keepdims=True), observations.std(axis=0, keepdims=True)
         self.act_mean, self.act_std = actions.mean(axis=0, keepdims=True), actions.std(axis=0, keepdims=True)
         self.reward_mean, self.reward_std = rewards.mean(), rewards.std()
-        #self.normalized_raw = normalize_raw
-        #self.normalize_reward = normalize_reward
-        #self.obs_mean, self.obs_std = observations.mean(axis=0, keepdims=True), observations.std(axis=0, keepdims=True)
-        #self.act_mean, self.act_std = actions.mean(axis=0, keepdims=True), actions.std(axis=0, keepdims=True)
-        #self.reward_mean, self.reward_std = rewards.mean(), rewards.std()
-
         if normalize_raw:
             observations = (observations-self.obs_mean) / self.obs_std
             actions = (actions-self.act_mean) / self.act_std
@@ -115,7 +84,6 @@ class SequenceDataset(torch.utils.data.Dataset):
         if penalty is not None:
             terminal_mask = realterminals.squeeze()
             self.rewards_raw[terminal_mask] = penalty
-        #print(terminals)
         ## segment
         print(f'[ datasets/sequence ] Segmenting...', end=' ', flush=True)
         self.joined_segmented, self.termination_flags, self.path_lengths = segment(self.joined_raw, terminals, max_path_length)
@@ -193,42 +161,32 @@ class SequenceDataset(torch.utils.data.Dataset):
         ], axis=1)
 
 
-    # def denormalize(self, states, actions, rewards, values):
-    #     states = states*self.obs_std + self.obs_mean
-    #     actions = actions*self.act_std + self.act_mean
-    #     rewards = rewards*self.reward_std + self.reward_mean
-    #     values = values*self.value_std + self.value_mean
-    #     return states, actions, rewards, values
-    #     return states, actions, values
-
     def denormalize(self, states, actions, values):
         states = states*self.obs_std + self.obs_mean
         actions = actions*self.act_std + self.act_mean
         values = values*self.value_std + self.value_mean
         return states, actions, values
 
-    # def normalize_joined_single(self, joined):
-    #     joined_std = np.concatenate([self.obs_std[0], self.act_std[0], self.reward_std[None], self.value_std[None]])
-    #     joined_mean = np.concatenate([self.obs_mean[0], self.act_mean[0], self.reward_mean[None], self.value_mean[None]])
-    #     return (joined-joined_mean) / joined_std
 
     def normalize_joined_single(self, joined):
-        joined_std = np.concatenate([self.value_std[None], self.obs_std[0], self.act_std[0], self.act_std[0], self.act_std[0]])
-        joined_mean = np.concatenate([self.value_mean[None], self.obs_mean[0], self.act_mean[0], self.act_mean[0], self.act_mean[0]])
-        return (joined-joined_mean) / joined_std
+        value_part = self.value_std[None]  # shape (1,)
+        obs_part = self.obs_std[0]  # shape (obs_dim,)
 
-    # def denormalize_joined(self, joined):
-    #     states = joined[:,:self.observation_dim]
-    #     actions = joined[:,self.observation_dim:self.observation_dim+self.action_dim]
-    #     rewards = joined[:,-3, None]
-    #     values = joined[:,-2, None]
-    #     results = self.denormalize(states, actions, rewards, values)
-    #     return np.concatenate(results+(joined[:, -1, None],), axis=-1)
+        # Option A: list-comprehension + unpack
+        action_parts_std = *[self.act_std[0] for _ in range(self.action_sequence_length)],
+        action_parts_mean = *[self.act_mean[0] for _ in range(self.action_sequence_length)],
+
+        joined_std = np.concatenate([value_part, obs_part, *action_parts_std])
+        joined_mean = np.concatenate([self.value_mean[None],
+                                      self.obs_mean[0],
+                                      *action_parts_mean])
+
+        return (joined - joined_mean) / joined_std
+
 
     def denormalize_joined(self, joined):
         states = joined[:,1:self.observation_dim+1]
         actions = joined[:,1+self.observation_dim:self.observation_dim+1+self.action_dim]
-        #rewards = joined[:,-3, None]
         values = joined[:,0, None]
         results = self.denormalize(states, actions, values)
         return np.concatenate(results+(joined[:, -1, None],), axis=-1)

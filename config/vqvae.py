@@ -11,7 +11,7 @@ args_to_watch = [
     ('prefix', ''),
     ('plan_freq', 'freq'),
     ('horizon', 'H'),
-    ('beam_width', 'beam'),
+    ('initial_width', 'beam'),
 ]
 
 base = {
@@ -32,6 +32,7 @@ base = {
 
         'K': 512,
         'latent_step': 1,
+        #macro action(action chunk) length
         'macro_step': 3,
         'n_embd': 128,
         'trajectory_embd': 512,
@@ -45,7 +46,7 @@ base = {
         'attn_pdrop': 0.1,
 
         'step': 1,
-        'subsampled_sequence_length': 7,
+        'subsampled_sequence_length': 6,
         'termination_penalty': -1000,
         'exp_name': gpt_expname,
 
@@ -84,7 +85,7 @@ base = {
         "rounds": 2,
         "nb_samples": 4096,
 
-        'beam_width': 64,
+        'initial_width': 64,
         'n_expand': 4,
         'n_actions': 4,
         'b_percent': 0.5,
@@ -94,7 +95,7 @@ base = {
         'macro_step': 3,
         'prob_threshold': 0.05,
         'prob_weight': 5e2,
-
+        'depth': 3,
         'vis_freq': 200,
         'exp_name': watch(args_to_watch),
         'verbose': True,
