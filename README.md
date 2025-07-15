@@ -114,5 +114,7 @@ url={https://openreview.net/forum?id=pQsllTesiE}
 ## Acknowledgments
 
 Official Trajectory Autoencoding Planner (TAP) Implementation: [https://github.com/ZhengyaoJiang/latentplan](https://github.com/ZhengyaoJiang/latentplan)
+
 Official Trajectory Transformer (TT) Implementation: [https://github.com/jannerm/trajectory-transformer](https://github.com/jannerm/trajectory-transformer)
+
 Official One Risk to Rule Them All (1R2R) Implementation: [https://github.com/marc-rigter/1R2R](https://github.com/marc-rigter/1R2R)
