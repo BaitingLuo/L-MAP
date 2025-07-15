@@ -53,12 +53,12 @@ pip install -e .
    Locate the file offline_env.py within your d4rl installation path, and modify the method def get_dataset(self, h5path=None). An example script of offline_env.py is provided; simply replace the dataset path accordingly.
 
 
-Run training and testing pipeline:
+### Run training and testing pipeline:
 ```
 ./loco.sh
 ```
 
-To break it down:
+### To break it down:
 1. train the encoder and decoder:
 ```
 python scripts/train.py --dataset $data --exp_name $name-$round --tag development --seed $round
