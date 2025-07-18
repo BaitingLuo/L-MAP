@@ -63,7 +63,7 @@ base = {
         "normalize": True,
         "normalize_reward": True,
         "max_path_length": 1000,
-        "bottleneck": "pooling",
+        "bottleneck": "vq",
         "masking": "uniform",
         "disable_goal": False,
         "residual": True,
